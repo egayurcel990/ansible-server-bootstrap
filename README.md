@@ -28,14 +28,14 @@ ansible-playbook -i inventory/hosts.yml site.yml
 ## Automation Coverage
 
 | Role | What it does |
-|---|---|
-| `common` | Update packages, set timezone, configure hostname |
-| `ssh-hardening` | Disable root login, change default port, enforce key-based auth, configure fail2ban |
-| `ufw` | Enable firewall, whitelist SSH, HTTP, HTTPS, Node Exporter |
-| `nginx` | Install Nginx, configure as reverse proxy for the app |
-| `docker` | Install Docker + Compose, add deploy user to docker group |
-| `node-exporter` | Install Prometheus Node Exporter as systemd service |
-| `app-deploy` | Pull go-uptime-monitor image, run via Docker Compose, wire Nginx upstream |
+|------|--------------|
+| `common` | Update & upgrade packages, install essentials, set timezone (Asia/Jakarta) |
+| `ssh-hardening` | Disable root login, disable password auth, enforce key-based auth, install and enable fail2ban |
+| `ufw` | Enable firewall with default-deny, whitelist SSH, HTTP, HTTPS, and Node Exporter |
+| `docker` | Install Docker CE + Compose plugin, add deploy user to docker group |
+| `nginx` | Install Nginx, configure as reverse proxy for the app (port 80 → app container) |
+| `node-exporter` | Install Prometheus Node Exporter as a dedicated systemd service |
+| `app-deploy` | Pull go-uptime-monitor image from GHCR, run via Docker Compose |
 
 ---
 
@@ -44,24 +44,25 @@ ansible-playbook -i inventory/hosts.yml site.yml
 ```
 Ansible Control Node (your machine)
             │
-            │ SSH
+            │ SSH (key-based)
             ▼
 ┌──────────────────────────────────┐
 │        Ubuntu 22.04 Server       │
 │                                  │
 │  UFW Firewall                    │
-│  ├─ Port 2222  (SSH hardened)    │
+│  ├─ Port 22    (SSH)             │
 │  ├─ Port 80    (HTTP → Nginx)    │
+│  ├─ Port 443   (HTTPS)           │
 │  └─ Port 9100  (Node Exporter)   │
 │                                  │
 │  Nginx (reverse proxy)           │
-│  └─ :80 → go-uptime-monitor:8080 │
+│  └─ :80 → 127.0.0.1:8080        │
 │                                  │
 │  Docker                          │
-│  └─ go-uptime-monitor container  │
+│  └─ go-uptime-monitor (127.0.0.1:8080) │
 │                                  │
 │  Prometheus Node Exporter        │
-│  └─ exposes /metrics :9100       │
+│  └─ :9100 /metrics               │
 └──────────────────────────────────┘
 ```
 
@@ -87,6 +88,8 @@ ansible-playbook -i inventory/hosts.yml site.yml --tags nginx
 ansible-playbook -i inventory/hosts.yml site.yml --tags app
 ```
 
+After bootstrap completes, the app is available at **http://192.168.56.10** (or `http://localhost:8080` via the Vagrant port forward).
+
 ---
 
 ## Project Structure
@@ -94,25 +97,28 @@ ansible-playbook -i inventory/hosts.yml site.yml --tags app
 ```
 ansible-server-bootstrap/
 ├── inventory/
-│   ├── hosts.yml                   # Target hosts
+│   ├── hosts.yml                   # Target hosts and connection config
 │   └── group_vars/
-│       └── all.yml                 # Shared variables
+│       └── all.yml                 # Shared variables (SSH port, image, app port, etc.)
 ├── roles/
 │   ├── common/
-│   │   ├── tasks/main.yml
-│   │   └── defaults/main.yml
+│   │   ├── tasks/main.yml          # Package updates, timezone
+│   │   └── defaults/main.yml       # Default package list
 │   ├── ssh-hardening/
 │   │   ├── tasks/main.yml
+│   │   ├── handlers/main.yml
 │   │   └── templates/sshd_config.j2
 │   ├── ufw/
 │   │   └── tasks/main.yml
 │   ├── nginx/
 │   │   ├── tasks/main.yml
+│   │   ├── handlers/main.yml
 │   │   └── templates/app.conf.j2
 │   ├── docker/
 │   │   └── tasks/main.yml
 │   ├── node-exporter/
 │   │   ├── tasks/main.yml
+│   │   ├── handlers/main.yml
 │   │   └── templates/node-exporter.service.j2
 │   └── app-deploy/
 │       ├── tasks/main.yml
@@ -126,20 +132,20 @@ ansible-server-bootstrap/
 
 ## Configuration
 
-Edit `inventory/group_vars/all.yml`:
+Edit `inventory/group_vars/all.yml` to customize:
 
 ```yaml
 # SSH
-ssh_port: 2222
-ssh_user: deploy
+ssh_port: 22        # Change to a non-default port for real servers
+ssh_user: vagrant   # The deploy user (use 'ubuntu' for AWS EC2, etc.)
 
 # App
 app_image: ghcr.io/egayurcel990/go-uptime-monitor:latest
 app_port: 8080
-app_domain: localhost
 
 # Monitoring
 node_exporter_port: 9100
+node_exporter_version: "1.7.0"
 ```
 
 ---
@@ -147,17 +153,17 @@ node_exporter_port: 9100
 ## Testing Locally with Vagrant
 
 ```bash
-vagrant up                          # Start Ubuntu 22.04 VM
-ansible-playbook -i inventory/hosts.yml site.yml   # Bootstrap
-vagrant ssh                         # Verify manually
-vagrant destroy -f && vagrant up    # Full clean rebuild
+vagrant up                                         # Start Ubuntu 22.04 VM
+ansible-playbook -i inventory/hosts.yml site.yml   # Bootstrap the VM
+vagrant ssh                                        # SSH in to verify manually
+vagrant destroy -f && vagrant up                   # Full clean rebuild
 ```
 
 ---
 
 ## Extending to Real Servers
 
-Swap inventory to target a real VPS:
+Swap out the inventory to point at a real VPS:
 
 ```yaml
 # inventory/hosts.yml
@@ -169,7 +175,7 @@ all:
       ansible_ssh_private_key_file: ~/.ssh/id_rsa
 ```
 
-Works with AWS EC2, Oracle Cloud, or any Ubuntu 22.04 VPS — same playbook, zero changes.
+Works with AWS EC2, Oracle Cloud, DigitalOcean, or any Ubuntu 22.04 VPS — same playbook, no changes needed.
 
 ---
 
