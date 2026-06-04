@@ -35,7 +35,7 @@ ansible-playbook -i inventory/hosts.yml site.yml
 | `docker` | Install Docker CE + Compose plugin, add deploy user to docker group |
 | `nginx` | Install Nginx, configure as reverse proxy for the app (port 80 → app container) |
 | `node-exporter` | Install Prometheus Node Exporter as a dedicated systemd service |
-| `app-deploy` | Pull go-uptime-monitor image from GHCR, run via Docker Compose |
+| `app-deploy` | Pull go-uptime-monitor image from GHCR, auto-recreate container if image updated |
 
 ---
 
@@ -46,24 +46,24 @@ Ansible Control Node (your machine)
             │
             │ SSH (key-based)
             ▼
-┌──────────────────────────────────┐
-│        Ubuntu 22.04 Server       │
-│                                  │
-│  UFW Firewall                    │
-│  ├─ Port 22    (SSH)             │
-│  ├─ Port 80    (HTTP → Nginx)    │
-│  ├─ Port 443   (HTTPS)           │
-│  └─ Port 9100  (Node Exporter)   │
-│                                  │
-│  Nginx (reverse proxy)           │
-│  └─ :80 → 127.0.0.1:8080        │
-│                                  │
-│  Docker                          │
+┌──────────────────────────────────────┐
+│          Ubuntu 22.04 Server         │
+│                                      │
+│  UFW Firewall                        │
+│  ├─ Port 22    (SSH)                 │
+│  ├─ Port 80    (HTTP → Nginx)        │
+│  ├─ Port 443   (HTTPS)               │
+│  └─ Port 9100  (Node Exporter)       │
+│                                      │
+│  Nginx (reverse proxy)               │
+│  └─ :80 → 127.0.0.1:8080            │
+│                                      │
+│  Docker                              │
 │  └─ go-uptime-monitor (127.0.0.1:8080) │
-│                                  │
-│  Prometheus Node Exporter        │
-│  └─ :9100 /metrics               │
-└──────────────────────────────────┘
+│                                      │
+│  Prometheus Node Exporter            │
+│  └─ :9100 /metrics                   │
+└──────────────────────────────────────┘
 ```
 
 ---
@@ -89,6 +89,19 @@ ansible-playbook -i inventory/hosts.yml site.yml --tags app
 ```
 
 After bootstrap completes, the app is available at **http://192.168.56.10** (or `http://localhost:8080` via the Vagrant port forward).
+
+---
+
+## Smart Deploy — Auto-Recreate on Image Update
+
+The `app-deploy` role detects whether a new image is available and only recreates the container when needed:
+
+```
+Pull latest image  →  image unchanged  →  ensure container is running (no restart)
+Pull latest image  →  image updated    →  recreate container with new image
+```
+
+This means running `--tags app` is always safe — it will never unnecessarily restart the container, but will always pick up a new image when one is pushed.
 
 ---
 
@@ -153,10 +166,10 @@ node_exporter_version: "1.7.0"
 ## Testing Locally with Vagrant
 
 ```bash
-vagrant up                                         # Start Ubuntu 22.04 VM
-ansible-playbook -i inventory/hosts.yml site.yml   # Bootstrap the VM
-vagrant ssh                                        # SSH in to verify manually
-vagrant destroy -f && vagrant up                   # Full clean rebuild
+vagrant up                                          # Start Ubuntu 22.04 VM
+ansible-playbook -i inventory/hosts.yml site.yml    # Bootstrap the VM
+vagrant ssh                                         # SSH in to verify manually
+vagrant destroy -f && vagrant up                    # Full clean rebuild
 ```
 
 ---
@@ -180,5 +193,5 @@ Works with AWS EC2, Oracle Cloud, DigitalOcean, or any Ubuntu 22.04 VPS — same
 ---
 
 <p align="center">
-  <i>Deploys <a href="https://github.com/egayurcel990/go-uptime-monitor">go-uptime-monitor</a> · Universitas Brawijaya · 2025</i>
+  <i>Deploys <a href="https://github.com/egayurcel990/go-uptime-monitor">go-uptime-monitor</a> · Ega Yurcel Satriaji · 2025</i>
 </p>
