@@ -20,9 +20,20 @@
   community.docker.docker_image:
     name: "{{ app_image }}"
     source: pull
+    force_source: true
+  register: image_pull
 
-- name: Start app with Docker Compose
+- name: Recreate container if image updated
   become: true
   community.docker.docker_compose_v2:
     project_src: /opt/uptime-monitor
     state: present
+    recreate: always
+  when: image_pull.changed
+
+- name: Ensure app is running (no image update)
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: /opt/uptime-monitor
+    state: present
+  when: not image_pull.changed
