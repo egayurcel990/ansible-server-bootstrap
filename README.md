@@ -68,27 +68,144 @@ Ansible Control Node (your machine)
 
 ---
 
-## Quick Start
+## Prerequisites
 
-**Prerequisites:** Ansible, VirtualBox, Vagrant
+Before you begin, make sure the following tools are installed on your machine.
+
+### 1. VirtualBox
+
+VirtualBox is the virtualization provider used to run the local Ubuntu VM.
+
+- Download: https://www.virtualbox.org/wiki/Downloads
+- Pick the installer for your OS (Windows, macOS, or Linux) and run it
+
+### 2. Vagrant
+
+Vagrant manages the VM lifecycle (create, start, stop, destroy).
+
+- Download: https://developer.hashicorp.com/vagrant/downloads
+- Pick the installer for your OS and run it
+
+Verify both are installed:
+```bash
+vagrant --version    # should print e.g. Vagrant 2.4.x
+vboxmanage --version # should print e.g. 7.0.x
+```
+
+### 3. Ansible
+
+Ansible runs the playbooks from your machine to configure the VM over SSH.
+
+**Ubuntu / Debian / WSL:**
+```bash
+sudo apt update
+sudo apt install -y ansible
+```
+
+**macOS:**
+```bash
+brew install ansible
+```
+
+**Windows (native):** Ansible does not run natively on Windows. Use WSL (Windows Subsystem for Linux) and install Ansible inside it following the Ubuntu steps above.
+
+Verify:
+```bash
+ansible --version # should print e.g. ansible [core 2.x.x]
+```
+
+### 4. Ansible Docker Collection
+
+The `app-deploy` role uses the `community.docker` collection to manage containers.
+
+```bash
+ansible-galaxy collection install community.docker
+```
+
+---
+
+## Quick Start (Local VM with Vagrant)
+
+### Step 1 — Clone the repo
 
 ```bash
 git clone https://github.com/egayurcel990/ansible-server-bootstrap
 cd ansible-server-bootstrap
+```
 
-# Spin up test VM
+### Step 2 — Generate an SSH key for Ansible
+
+This key will be used by Ansible to connect to the VM. Skip this step if you already have one you want to use.
+
+```bash
+mkdir -p ~/.ssh/ansible-server-bootstrap
+ssh-keygen -t ed25519 -f ~/.ssh/ansible-server-bootstrap/vagrant_private_key -N ""
+```
+
+### Step 3 — Start the VM
+
+```bash
+vagrant up
+```
+
+This downloads the Ubuntu 22.04 box (only on first run, ~500MB) and starts the VM. The VM will be accessible at `192.168.56.10`.
+
+### Step 4 — Copy your SSH key into the VM
+
+```bash
+ssh-copy-id -i ~/.ssh/ansible-server-bootstrap/vagrant_private_key.pub \
+  -o StrictHostKeyChecking=no \
+  -p 22 vagrant@192.168.56.10
+# Default Vagrant password: vagrant
+```
+
+### Step 5 — Run the playbook
+
+```bash
+ansible-playbook -i inventory/hosts.yml site.yml
+```
+
+You should see all tasks complete with `failed=0`. The full run takes about 3–5 minutes.
+
+### Step 6 — Open the dashboard
+
+Open your browser and go to **http://localhost:8080**
+
+You should see the Go Uptime Monitor dashboard. Add a target to start monitoring:
+
+```bash
+curl -X POST http://192.168.56.10/api/v1/targets \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Google", "url": "https://google.com", "interval": 60}'
+```
+
+---
+
+## Stopping and Starting the VM
+
+```bash
+# Stop the VM (data is preserved)
+vagrant halt
+
+# Start it again later
 vagrant up
 
-# Run full bootstrap
-ansible-playbook -i inventory/hosts.yml site.yml
+# Destroy the VM completely (data is lost)
+vagrant destroy -f
+```
 
-# Run specific role only
+---
+
+## Running Specific Roles
+
+You can re-run individual roles without running the full playbook using tags:
+
+```bash
 ansible-playbook -i inventory/hosts.yml site.yml --tags ssh
+ansible-playbook -i inventory/hosts.yml site.yml --tags docker
 ansible-playbook -i inventory/hosts.yml site.yml --tags nginx
 ansible-playbook -i inventory/hosts.yml site.yml --tags app
 ```
-
-After bootstrap completes, the app is available at **http://192.168.56.10** (or `http://localhost:8080` via the Vagrant port forward).
 
 ---
 
@@ -102,44 +219,6 @@ Pull latest image  →  image updated    →  recreate container with new image
 ```
 
 This means running `--tags app` is always safe — it will never unnecessarily restart the container, but will always pick up a new image when one is pushed.
-
----
-
-## Project Structure
-
-```
-ansible-server-bootstrap/
-├── inventory/
-│   ├── hosts.yml                   # Target hosts and connection config
-│   └── group_vars/
-│       └── all.yml                 # Shared variables (SSH port, image, app port, etc.)
-├── roles/
-│   ├── common/
-│   │   ├── tasks/main.yml          # Package updates, timezone
-│   │   └── defaults/main.yml       # Default package list
-│   ├── ssh-hardening/
-│   │   ├── tasks/main.yml
-│   │   ├── handlers/main.yml
-│   │   └── templates/sshd_config.j2
-│   ├── ufw/
-│   │   └── tasks/main.yml
-│   ├── nginx/
-│   │   ├── tasks/main.yml
-│   │   ├── handlers/main.yml
-│   │   └── templates/app.conf.j2
-│   ├── docker/
-│   │   └── tasks/main.yml
-│   ├── node-exporter/
-│   │   ├── tasks/main.yml
-│   │   ├── handlers/main.yml
-│   │   └── templates/node-exporter.service.j2
-│   └── app-deploy/
-│       ├── tasks/main.yml
-│       └── templates/docker-compose.yml.j2
-├── site.yml                        # Master playbook
-├── Vagrantfile                     # Local test VM (Ubuntu 22.04)
-└── README.md
-```
 
 ---
 
@@ -163,13 +242,25 @@ node_exporter_version: "1.7.0"
 
 ---
 
-## Testing Locally with Vagrant
+## Project Structure
 
-```bash
-vagrant up                                          # Start Ubuntu 22.04 VM
-ansible-playbook -i inventory/hosts.yml site.yml    # Bootstrap the VM
-vagrant ssh                                         # SSH in to verify manually
-vagrant destroy -f && vagrant up                    # Full clean rebuild
+```
+ansible-server-bootstrap/
+├── inventory/
+│   ├── hosts.yml                   # Target hosts and connection config
+│   └── group_vars/
+│       └── all.yml                 # Shared variables
+├── roles/
+│   ├── common/                     # Package updates, timezone
+│   ├── ssh-hardening/              # sshd config, fail2ban
+│   ├── ufw/                        # Firewall rules
+│   ├── nginx/                      # Reverse proxy config
+│   ├── docker/                     # Docker CE install
+│   ├── node-exporter/              # Prometheus Node Exporter
+│   └── app-deploy/                 # Pull and run the app container
+├── site.yml                        # Master playbook
+├── Vagrantfile                     # Local test VM (Ubuntu 22.04)
+└── README.md
 ```
 
 ---
@@ -189,6 +280,18 @@ all:
 ```
 
 Works with AWS EC2, Oracle Cloud, DigitalOcean, or any Ubuntu 22.04 VPS — same playbook, no changes needed.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `vagrant up` fails with "VT-x not available" | Enable virtualization in your BIOS/UEFI settings |
+| `unreachable=1` in Ansible | VM not fully booted yet — wait 30s and retry |
+| `Permission denied (publickey)` | Re-run Step 4 to copy the SSH key into the VM |
+| Dashboard not loading at localhost:8080 | Run `vagrant reload` to re-apply port forwarding |
+| Container not running | SSH into VM with `vagrant ssh`, then check `docker logs uptime-monitor` |
 
 ---
 
